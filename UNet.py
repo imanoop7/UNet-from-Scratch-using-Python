@@ -1,20 +1,27 @@
 import numpy as np
 
+# Conv2D: 2D Convolutional layer
 class Conv2D:
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0):
+        # Initialize the convolutional layer parameters
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
+        # Initialize weights with small random values
         self.weights = np.random.randn(out_channels, in_channels, kernel_size, kernel_size) * 0.01
+        # Initialize biases with zeros
         self.bias = np.zeros((out_channels, 1))
 
     def forward(self, input):
+        # Calculate output dimensions
         h_out = (input.shape[2] - self.kernel_size + 2 * self.padding) // self.stride + 1
         w_out = (input.shape[3] - self.kernel_size + 2 * self.padding) // self.stride + 1
         output = np.zeros((input.shape[0], self.weights.shape[0], h_out, w_out))
 
+        # Add padding to the input
         padded_input = np.pad(input, ((0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant')
 
+        # Perform convolution operation
         for i in range(h_out):
             for j in range(w_out):
                 h_start = i * self.stride
@@ -28,9 +35,11 @@ class Conv2D:
 
         return output
 
+# ReLU activation function
 def relu(x):
     return np.maximum(0, x)
 
+# MaxPool2D: 2D Max Pooling layer
 class MaxPool2D:
     def __init__(self, kernel_size=2, stride=2):
         self.kernel_size = kernel_size
@@ -42,6 +51,7 @@ class MaxPool2D:
         w_out = (w - self.kernel_size) // self.stride + 1
         output = np.zeros((n, c, h_out, w_out))
 
+        # Perform max pooling operation
         for i in range(h_out):
             for j in range(w_out):
                 h_start = i * self.stride
@@ -53,19 +63,24 @@ class MaxPool2D:
 
         return output
 
+# Upsample: Upsampling layer
 class Upsample:
     def __init__(self, scale_factor=2):
         self.scale_factor = scale_factor
 
     def forward(self, input):
-        return input.repeat(self.scale_factor, axis=2).repeat(self.scale_factor, axis=3)
+        n, c, h, w = input.shape
+        # Repeat input values to increase spatial dimensions
+        return input.repeat(1, 1, self.scale_factor, 1).repeat(1, 1, 1, self.scale_factor)
 
+# UNet: Main U-Net architecture
 class UNet:
     def __init__(self, n_channels, n_classes):
         self.n_channels = n_channels
         self.n_classes = n_classes
 
         # Encoder (Contracting Path)
+        # Each step in the encoder consists of two convolutions followed by a max pooling
         self.conv1 = Conv2D(n_channels, 64)
         self.conv2 = Conv2D(64, 64)
         self.pool1 = MaxPool2D()
@@ -87,22 +102,24 @@ class UNet:
         self.conv10 = Conv2D(1024, 1024)
 
         # Decoder (Expanding Path)
+        # Each step in the decoder consists of an upsampling operation followed by two convolutions
         self.up1 = Upsample()
-        self.conv11 = Conv2D(1024 + 512, 512)
+        self.conv11 = Conv2D(1024 + 512, 512)  # +512 for skip connection
         self.conv12 = Conv2D(512, 512)
 
         self.up2 = Upsample()
-        self.conv13 = Conv2D(512 + 256, 256)
+        self.conv13 = Conv2D(512 + 256, 256)  # +256 for skip connection
         self.conv14 = Conv2D(256, 256)
 
         self.up3 = Upsample()
-        self.conv15 = Conv2D(256 + 128, 128)
+        self.conv15 = Conv2D(256 + 128, 128)  # +128 for skip connection
         self.conv16 = Conv2D(128, 128)
 
         self.up4 = Upsample()
-        self.conv17 = Conv2D(128 + 64, 64)
+        self.conv17 = Conv2D(128 + 64, 64)  # +64 for skip connection
         self.conv18 = Conv2D(64, 64)
 
+        # Final convolution to produce the output
         self.conv19 = Conv2D(64, n_classes, kernel_size=1)
 
     def forward(self, x):
@@ -135,26 +152,29 @@ class UNet:
         print(f"After bridge: {conv10.shape}")
 
         # Decoder
+        # In each decoder step, we upsample, concatenate with the corresponding encoder output (skip connection)
+        # and then apply two convolutions
         up1 = self.up1.forward(conv10)
-        merge1 = np.concatenate((up1, conv8), axis=1)
+        print(f"up1 shape: {up1.shape}, conv8 shape: {conv8.shape}")
+        merge1 = np.concatenate((up1, conv8), axis=1)  # Skip connection
         conv11 = relu(self.conv11.forward(merge1))
         conv12 = relu(self.conv12.forward(conv11))
         print(f"After first upsampling: {conv12.shape}")
 
         up2 = self.up2.forward(conv12)
-        merge2 = np.concatenate((up2, conv6), axis=1)
+        merge2 = np.concatenate((up2, conv6), axis=1)  # Skip connection
         conv13 = relu(self.conv13.forward(merge2))
         conv14 = relu(self.conv14.forward(conv13))
         print(f"After second upsampling: {conv14.shape}")
 
         up3 = self.up3.forward(conv14)
-        merge3 = np.concatenate((up3, conv4), axis=1)
+        merge3 = np.concatenate((up3, conv4), axis=1)  # Skip connection
         conv15 = relu(self.conv15.forward(merge3))
         conv16 = relu(self.conv16.forward(conv15))
         print(f"After third upsampling: {conv16.shape}")
 
         up4 = self.up4.forward(conv16)
-        merge4 = np.concatenate((up4, conv2), axis=1)
+        merge4 = np.concatenate((up4, conv2), axis=1)  # Skip connection
         conv17 = relu(self.conv17.forward(merge4))
         conv18 = relu(self.conv18.forward(conv17))
         print(f"After fourth upsampling: {conv18.shape}")
@@ -169,4 +189,3 @@ unet = UNet(n_channels=1, n_classes=2)
 input_image = np.random.randn(1, 1, 572, 572)
 output = unet.forward(input_image)
 print(f"Output shape: {output.shape}")
-
