@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Conv2D: 2D Convolutional layer
 class Conv2D:
@@ -69,9 +70,7 @@ class Upsample:
         self.scale_factor = scale_factor
 
     def forward(self, input):
-        n, c, h, w = input.shape
-        # Repeat input values to increase spatial dimensions
-        return input.repeat(1, 1, self.scale_factor, 1).repeat(1, 1, 1, self.scale_factor)
+        return np.repeat(np.repeat(input, self.scale_factor, axis=2), self.scale_factor, axis=3)
 
 # UNet: Main U-Net architecture
 class UNet:
@@ -104,20 +103,20 @@ class UNet:
         # Decoder (Expanding Path)
         # Each step in the decoder consists of an upsampling operation followed by two convolutions
         self.up1 = Upsample()
-        self.conv11 = Conv2D(1024 + 512, 512)  # +512 for skip connection
-        self.conv12 = Conv2D(512, 512)
+        self.conv11 = Conv2D(1024, 512)  # Reduce channels before concatenation
+        self.conv12 = Conv2D(1024, 512)  # 1024 channels after concatenation
 
         self.up2 = Upsample()
-        self.conv13 = Conv2D(512 + 256, 256)  # +256 for skip connection
-        self.conv14 = Conv2D(256, 256)
+        self.conv13 = Conv2D(512, 256)  # Reduce channels before concatenation
+        self.conv14 = Conv2D(512, 256)  # 512 channels after concatenation
 
         self.up3 = Upsample()
-        self.conv15 = Conv2D(256 + 128, 128)  # +128 for skip connection
-        self.conv16 = Conv2D(128, 128)
+        self.conv15 = Conv2D(256, 128)  # Reduce channels before concatenation
+        self.conv16 = Conv2D(256, 128)  # 256 channels after concatenation
 
         self.up4 = Upsample()
-        self.conv17 = Conv2D(128 + 64, 64)  # +64 for skip connection
-        self.conv18 = Conv2D(64, 64)
+        self.conv17 = Conv2D(128, 64)  # Reduce channels before concatenation
+        self.conv18 = Conv2D(128, 64)  # 128 channels after concatenation
 
         # Final convolution to produce the output
         self.conv19 = Conv2D(64, n_classes, kernel_size=1)
@@ -152,32 +151,41 @@ class UNet:
         print(f"After bridge: {conv10.shape}")
 
         # Decoder
-        # In each decoder step, we upsample, concatenate with the corresponding encoder output (skip connection)
-        # and then apply two convolutions
         up1 = self.up1.forward(conv10)
-        print(f"up1 shape: {up1.shape}, conv8 shape: {conv8.shape}")
-        merge1 = np.concatenate((up1, conv8), axis=1)  # Skip connection
-        conv11 = relu(self.conv11.forward(merge1))
-        conv12 = relu(self.conv12.forward(conv11))
-        print(f"After first upsampling: {conv12.shape}")
+        up1 = self.conv11.forward(up1)  # Reduce channels
+        crop_height = min(up1.shape[2], conv8.shape[2])
+        crop_width = min(up1.shape[3], conv8.shape[3])
+        up1_cropped = up1[:, :, :crop_height, :crop_width]
+        conv8_cropped = conv8[:, :, :crop_height, :crop_width]
+        merge1 = np.concatenate((up1_cropped, conv8_cropped), axis=1)
+        conv12 = relu(self.conv12.forward(merge1))
 
         up2 = self.up2.forward(conv12)
-        merge2 = np.concatenate((up2, conv6), axis=1)  # Skip connection
-        conv13 = relu(self.conv13.forward(merge2))
-        conv14 = relu(self.conv14.forward(conv13))
-        print(f"After second upsampling: {conv14.shape}")
+        up2 = self.conv13.forward(up2)
+        crop_height = min(up2.shape[2], conv6.shape[2])
+        crop_width = min(up2.shape[3], conv6.shape[3])
+        up2_cropped = up2[:, :, :crop_height, :crop_width]
+        conv6_cropped = conv6[:, :, :crop_height, :crop_width]
+        merge2 = np.concatenate((up2_cropped, conv6_cropped), axis=1)
+        conv14 = relu(self.conv14.forward(merge2))
 
         up3 = self.up3.forward(conv14)
-        merge3 = np.concatenate((up3, conv4), axis=1)  # Skip connection
-        conv15 = relu(self.conv15.forward(merge3))
-        conv16 = relu(self.conv16.forward(conv15))
-        print(f"After third upsampling: {conv16.shape}")
+        up3 = self.conv15.forward(up3)
+        crop_height = min(up3.shape[2], conv4.shape[2])
+        crop_width = min(up3.shape[3], conv4.shape[3])
+        up3_cropped = up3[:, :, :crop_height, :crop_width]
+        conv4_cropped = conv4[:, :, :crop_height, :crop_width]
+        merge3 = np.concatenate((up3_cropped, conv4_cropped), axis=1)
+        conv16 = relu(self.conv16.forward(merge3))
 
         up4 = self.up4.forward(conv16)
-        merge4 = np.concatenate((up4, conv2), axis=1)  # Skip connection
-        conv17 = relu(self.conv17.forward(merge4))
-        conv18 = relu(self.conv18.forward(conv17))
-        print(f"After fourth upsampling: {conv18.shape}")
+        up4 = self.conv17.forward(up4)
+        crop_height = min(up4.shape[2], conv2.shape[2])
+        crop_width = min(up4.shape[3], conv2.shape[3])
+        up4_cropped = up4[:, :, :crop_height, :crop_width]
+        conv2_cropped = conv2[:, :, :crop_height, :crop_width]
+        merge4 = np.concatenate((up4_cropped, conv2_cropped), axis=1)
+        conv18 = relu(self.conv18.forward(merge4))
 
         conv19 = self.conv19.forward(conv18)
         print(f"Final output shape: {conv19.shape}")
@@ -188,4 +196,24 @@ class UNet:
 unet = UNet(n_channels=1, n_classes=2)
 input_image = np.random.randn(1, 1, 572, 572)
 output = unet.forward(input_image)
+# Print input and output shapes
+print(f"Input shape: {input_image.shape}")
 print(f"Output shape: {output.shape}")
+
+# Visualize input and output
+plt.figure(figsize=(12, 6))
+
+# Plot the input image
+plt.subplot(1, 2, 1)
+plt.imshow(input_image[0, 0], cmap='gray')
+plt.title('Input Image')
+plt.axis('off')
+
+# Plot the output (first channel)
+plt.subplot(1, 2, 2)
+plt.imshow(output[0, 0], cmap='viridis')
+plt.title('Output (Class 1)')
+plt.axis('off')
+
+plt.tight_layout()
+plt.show()
