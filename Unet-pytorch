@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
+import numpy as np
 
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -53,25 +55,25 @@ class UNet(nn.Module):
 
         # Decoder
         dec4 = self.upconv4(middle)
-        # Crop enc4 to match dec4's dimensions
-        enc4 = self.crop(enc4, dec4)
-        dec4 = torch.cat([dec4, enc4], dim=1)
+        dec4 = torch.cat([dec4, self.crop(enc4, dec4)], dim=1)
         dec4 = self.decoder4(dec4)
 
         dec3 = self.upconv3(dec4)
-        enc3 = self.crop(enc3, dec3)
-        dec3 = torch.cat([dec3, enc3], dim=1)
+        dec3 = torch.cat([dec3, self.crop(enc3, dec3)], dim=1)
         dec3 = self.decoder3(dec3)
 
         dec2 = self.upconv2(dec3)
-        enc2 = self.crop(enc2, dec2)
-        dec2 = torch.cat([dec2, enc2], dim=1)
+        dec2 = torch.cat([dec2, self.crop(enc2, dec2)], dim=1)
         dec2 = self.decoder2(dec2)
 
         dec1 = self.upconv1(dec2)
-        enc1 = self.crop(enc1, dec1)
-        dec1 = torch.cat([dec1, enc1], dim=1)
+        dec1 = torch.cat([dec1, self.crop(enc1, dec1)], dim=1)
         dec1 = self.decoder1(dec1)
+
+        # Add padding to match input dimensions
+        diff_h = x.size()[2] - dec1.size()[2]
+        diff_w = x.size()[3] - dec1.size()[3]
+        dec1 = nn.functional.pad(dec1, [diff_w // 2, diff_w - diff_w // 2, diff_h // 2, diff_h - diff_h // 2])
 
         return self.final_conv(dec1)
 
@@ -82,15 +84,73 @@ class UNet(nn.Module):
         _, _, H, W = dec_feature.shape
         return enc_feature[:, :, :H, :W]
 
-# Test the model
+def create_cell_image(size=572):
+    # Create a blank image
+    image = np.zeros((size, size), dtype=np.float32)
+    
+    # Create cell membrane (circle)
+    center = size // 2
+    radius = size // 3
+    y, x = np.ogrid[:size, :size]
+    cell_mask = ((x - center)**2 + (y - center)**2 <= radius**2)
+    image[cell_mask] = 0.5
+    
+    # Create nucleus (smaller circle)
+    nucleus_radius = radius // 2
+    nucleus_mask = ((x - center)**2 + (y - center)**2 <= nucleus_radius**2)
+    image[nucleus_mask] = 1.0
+    
+    # Add some noise
+    noise = np.random.normal(0, 0.1, (size, size))
+    image += noise
+    
+    # Clip values to [0, 1] range
+    image = np.clip(image, 0, 1)
+    
+    return image
+
 def test_unet():
-    x = torch.randn((1, 1, 572, 572))
+    # Create a synthetic cell image
+    cell_image = create_cell_image(572)
+    
+    # Convert to PyTorch tensor and add batch and channel dimensions
+    x = torch.from_numpy(cell_image).unsqueeze(0).unsqueeze(0)
+    
     model = UNet(n_channels=1, n_classes=2)
-    preds = model(x)
+    
+    # Set model to evaluation mode and disable gradient computation
+    model.eval()
+    with torch.no_grad():
+        preds = model(x)
+    
     print(f"Input shape: {x.shape}")
     print(f"Output shape: {preds.shape}")
-    assert preds.shape == (1, 2, 572, 572)
+    assert preds.shape == (1, 2, 572, 572), f"Expected shape (1, 2, 572, 572), but got {preds.shape}"
     print("UNet test passed!")
+
+    # Visualize input and output
+    plt.figure(figsize=(15, 5))
+
+    # Plot the input image
+    plt.subplot(1, 3, 1)
+    plt.imshow(cell_image, cmap='gray')
+    plt.title('Input Image')
+    plt.axis('off')
+
+    # Plot the output (first channel - background)
+    plt.subplot(1, 3, 2)
+    plt.imshow(preds[0, 0].numpy(), cmap='viridis')
+    plt.title('Output (Background)')
+    plt.axis('off')
+
+    # Plot the output (second channel - cell)
+    plt.subplot(1, 3, 3)
+    plt.imshow(preds[0, 1].numpy(), cmap='viridis')
+    plt.title('Output (Cell)')
+    plt.axis('off')
+
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == "__main__":
     test_unet()
