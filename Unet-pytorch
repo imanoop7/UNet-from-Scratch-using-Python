@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -84,34 +85,39 @@ class UNet(nn.Module):
         _, _, H, W = dec_feature.shape
         return enc_feature[:, :, :H, :W]
 
-def create_cell_image(size=572):
-    # Create a blank image
+def create_cell(image, center, radius, intensity):
+    y, x = np.ogrid[:image.shape[0], :image.shape[1]]
+    dist_from_center = np.sqrt((x - center[0])**2 + (y - center[1])**2)
+    mask = dist_from_center <= radius
+    image[mask] = np.maximum(image[mask], intensity * (1 - dist_from_center[mask] / radius))
+
+def create_multicell_image(size=572, num_cells=10):
     image = np.zeros((size, size), dtype=np.float32)
+    mask = np.zeros((size, size), dtype=np.float32)
     
-    # Create cell membrane (circle)
-    center = size // 2
-    radius = size // 3
-    y, x = np.ogrid[:size, :size]
-    cell_mask = ((x - center)**2 + (y - center)**2 <= radius**2)
-    image[cell_mask] = 0.5
+    for _ in range(num_cells):
+        center = (np.random.randint(0, size), np.random.randint(0, size))
+        radius = np.random.randint(20, 60)
+        intensity = np.random.uniform(0.5, 1.0)
+        
+        create_cell(image, center, radius, intensity)
+        create_cell(mask, center, radius, 1.0)
     
-    # Create nucleus (smaller circle)
-    nucleus_radius = radius // 2
-    nucleus_mask = ((x - center)**2 + (y - center)**2 <= nucleus_radius**2)
-    image[nucleus_mask] = 1.0
-    
-    # Add some noise
+    # Add background noise
     noise = np.random.normal(0, 0.1, (size, size))
     image += noise
+    
+    # Apply Gaussian blur
+    image = gaussian_filter(image, sigma=1)
     
     # Clip values to [0, 1] range
     image = np.clip(image, 0, 1)
     
-    return image
+    return image, mask
 
 def test_unet():
-    # Create a synthetic cell image
-    cell_image = create_cell_image(572)
+    # Create a synthetic multicell image
+    cell_image, true_mask = create_multicell_image(572)
     
     # Convert to PyTorch tensor and add batch and channel dimensions
     x = torch.from_numpy(cell_image).unsqueeze(0).unsqueeze(0)
@@ -128,25 +134,34 @@ def test_unet():
     assert preds.shape == (1, 2, 572, 572), f"Expected shape (1, 2, 572, 572), but got {preds.shape}"
     print("UNet test passed!")
 
-    # Visualize input and output
-    plt.figure(figsize=(15, 5))
+    # Apply softmax to get probabilities
+    preds_probs = torch.softmax(preds, dim=1)
+
+    # Visualize input, true mask, and output
+    plt.figure(figsize=(20, 5))
 
     # Plot the input image
-    plt.subplot(1, 3, 1)
+    plt.subplot(1, 4, 1)
     plt.imshow(cell_image, cmap='gray')
     plt.title('Input Image')
     plt.axis('off')
 
-    # Plot the output (first channel - background)
-    plt.subplot(1, 3, 2)
-    plt.imshow(preds[0, 0].numpy(), cmap='viridis')
-    plt.title('Output (Background)')
+    # Plot the true mask
+    plt.subplot(1, 4, 2)
+    plt.imshow(true_mask, cmap='gray')
+    plt.title('True Mask')
     plt.axis('off')
 
-    # Plot the output (second channel - cell)
-    plt.subplot(1, 3, 3)
-    plt.imshow(preds[0, 1].numpy(), cmap='viridis')
-    plt.title('Output (Cell)')
+    # Plot the output (background probability)
+    plt.subplot(1, 4, 3)
+    plt.imshow(preds_probs[0, 0].numpy(), cmap='viridis')
+    plt.title('Predicted Background Probability')
+    plt.axis('off')
+
+    # Plot the output (cell probability)
+    plt.subplot(1, 4, 4)
+    plt.imshow(preds_probs[0, 1].numpy(), cmap='viridis')
+    plt.title('Predicted Cell Probability')
     plt.axis('off')
 
     plt.tight_layout()
